@@ -133,13 +133,13 @@ DEFAULT_STATE = {
 }
 
 DEFAULT_ACTIONS = [
-    {"tag": "확인필요", "text": "ACB — USD 플랜 최종 등록 완료 여부 Irene에게 확인 요청",
+    {"tag": "확인필요", "bank": "ACB",         "text": "USD 플랜 최종 등록 완료 여부 Irene에게 확인 요청",
      "assignee": "", "due_date": "", "completed": False},
-    {"tag": "긴급",    "text": "Sacombank — Irene/Wisid에게 BIN 리스트 제출 촉구 필요",
+    {"tag": "긴급",    "bank": "Sacombank",    "text": "Irene/Wisid에게 BIN 리스트 제출 촉구 필요",
      "assignee": "", "due_date": "", "completed": False},
-    {"tag": "대기중",  "text": "TCB — USD 플랜 세팅 완료 확인 후 BIN 리스트 수급 진행",
+    {"tag": "대기중",  "bank": "TCB",          "text": "USD 플랜 세팅 완료 확인 후 BIN 리스트 수급 진행",
      "assignee": "", "due_date": "", "completed": False},
-    {"tag": "긴급",    "text": "Vietcombank — 로직 수정 이슈 단기 해결 불가. 신세계 런칭 시 제외 여부 의사결정 필요",
+    {"tag": "긴급",    "bank": "Vietcombank",  "text": "로직 수정 이슈 단기 해결 불가. 신세계 런칭 시 제외 여부 의사결정 필요",
      "assignee": "", "due_date": "", "completed": False},
 ]
 
@@ -186,6 +186,7 @@ for _act in st.session_state.actions:
     _act.setdefault("assignee", "")
     _act.setdefault("due_date", "")
     _act.setdefault("completed", False)
+    _act.setdefault("bank", "")
 
 
 # ── 3. 헬퍼 함수 ───────────────────────────────────────────────────────────────
@@ -329,7 +330,7 @@ def analyze_email(text: str) -> dict:
 
 - tc_url: 이메일에 T&C 원문 PDF/웹 URL이 있으면 해당 은행의 tc_url에 넣으세요.
 - bin_list: 본문에 등장하는 모든 6~8자리 BIN 번호를 배열로 추출하세요. 없으면 [].
-- actions: 후속 조치 항목 최대 5개. tag는 긴급|확인필요|대기중 중 하나.
+- actions: 후속 조치 항목 최대 5개. tag는 긴급|확인필요|대기중 중 하나. bank는 해당 은행명(등록 은행 중 하나), 여러 은행이면 가장 관련 높은 은행 하나만.
 - update_date: 확인되는 가장 최근 날짜 "YYYY년 MM월 DD일" 형식.
 
 [이메일 본문]
@@ -342,7 +343,7 @@ def analyze_email(text: str) -> dict:
   "irrelevant": false,
   "banks": {_bank_json_template()},
   "new_banks": [],
-  "actions": [{{"tag": "긴급|확인필요|대기중", "text": ""}}],
+  "actions": [{{"tag": "긴급|확인필요|대기중", "bank": "은행명", "text": ""}}],
   "update_date": ""
 }}"""
     return _call_claude_text(prompt)
@@ -374,7 +375,7 @@ def analyze_excel(sheet_data: dict) -> dict:
   "irrelevant": false,
   "banks": {_bank_json_template()},
   "new_banks": [],
-  "actions": [{{"tag": "긴급|확인필요|대기중", "text": ""}}],
+  "actions": [{{"tag": "긴급|확인필요|대기중", "bank": "은행명", "text": ""}}],
   "update_date": "",
   "submitting_bank": "",
   "bin_count": 0
@@ -398,7 +399,7 @@ def analyze_image(image_bytes: bytes, media_type: str) -> dict:
   "irrelevant": false,
   "banks": {_bank_json_template()},
   "new_banks": [],
-  "actions": [{{"tag": "긴급|확인필요|대기중", "text": ""}}],
+  "actions": [{{"tag": "긴급|확인필요|대기중", "bank": "은행명", "text": ""}}],
   "update_date": ""
 }}"""
     return _call_claude_vision(image_bytes, media_type, prompt)
@@ -458,6 +459,7 @@ def apply_update(parsed: dict, input_hash: str = None):
         for a in new_actions_raw:
             new_actions.append({
                 "tag":       a.get("tag", "확인필요"),
+                "bank":      a.get("bank", ""),
                 "text":      a.get("text", ""),
                 "assignee":  "",
                 "due_date":  "",
@@ -949,7 +951,7 @@ with dash_tab1:
             completed = a.get("completed", False)
             text_style = "text-decoration:line-through;color:#aaa;" if completed else ""
 
-            col_check, col_tag, col_text, col_assign, col_date = st.columns([0.5, 1.2, 4, 1.5, 1.5])
+            col_check, col_tag, col_bank, col_text, col_assign, col_date = st.columns([0.5, 1.2, 1.5, 4, 1.5, 1.5])
 
             with col_check:
                 new_done = st.checkbox("", value=completed, key=f"act_done_{idx}",
@@ -961,6 +963,16 @@ with dash_tab1:
 
             with col_tag:
                 st.markdown(f'<span class="{cls}">{a["tag"]}</span>', unsafe_allow_html=True)
+
+            with col_bank:
+                bank_name = a.get("bank", "")
+                if bank_name:
+                    st.markdown(
+                        f'<span style="display:inline-block;background:#F0F4FF;color:#1a3a8f;'
+                        f'border:1px solid #C7D4F5;padding:2px 10px;border-radius:16px;'
+                        f'font-size:12px;font-weight:600;">{bank_name}</span>',
+                        unsafe_allow_html=True,
+                    )
 
             with col_text:
                 st.markdown(f'<span style="{text_style}">{a["text"]}</span>', unsafe_allow_html=True)
@@ -989,14 +1001,18 @@ with dash_tab1:
 
         # 액션 아이템 수동 추가
         with st.expander("➕ 액션 아이템 직접 추가"):
-            new_tag  = st.selectbox("태그", ["긴급","확인필요","대기중"], key="new_act_tag")
+            c1, c2 = st.columns(2)
+            with c1:
+                new_tag  = st.selectbox("태그", ["긴급","확인필요","대기중"], key="new_act_tag")
+            with c2:
+                new_bank = st.selectbox("은행", [""] + st.session_state.bank_order, key="new_act_bank")
             new_text = st.text_input("내용", key="new_act_text", placeholder="조치 내용을 입력하세요")
             new_asn  = st.text_input("담당자", key="new_act_asn", placeholder="담당자 이름")
             new_due_str = st.text_input("마감일", key="new_act_due", placeholder="예: 06/01")
             if st.button("추가", key="add_act_btn", type="primary"):
                 if new_text.strip():
                     st.session_state.actions.append({
-                        "tag": new_tag, "text": new_text.strip(),
+                        "tag": new_tag, "bank": new_bank, "text": new_text.strip(),
                         "assignee": new_asn.strip(), "due_date": new_due_str.strip(),
                         "completed": False,
                     })
