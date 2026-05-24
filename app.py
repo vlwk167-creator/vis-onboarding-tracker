@@ -215,11 +215,23 @@ def load_from_gsheet(client, spreadsheet_id: str) -> dict | None:
         if not bank_order:
             return None
 
+        # input_hashes 시트 복원
+        input_hashes = []
+        try:
+            ws_hash = wb.worksheet("input_hashes")
+            for row in ws_hash.get_all_records():
+                h = row.get("hash", "")
+                if h:
+                    input_hashes.append(h)
+        except Exception:
+            pass
+
         return {
-            "bank_state":  bank_state,
-            "bank_order":  bank_order,
-            "actions":     actions if actions else list(DEFAULT_ACTIONS),
-            "update_time": "구글 시트에서 복원",
+            "bank_state":   bank_state,
+            "bank_order":   bank_order,
+            "actions":      actions if actions else list(DEFAULT_ACTIONS),
+            "update_time":  "구글 시트에서 복원",
+            "input_hashes": input_hashes,
         }
     except Exception:
         return None
@@ -253,10 +265,11 @@ if "bank_state" not in st.session_state:
         pass
 
     if _gsheet_data:
-        st.session_state.bank_state  = _gsheet_data["bank_state"]
-        st.session_state.bank_order  = _gsheet_data["bank_order"]
-        st.session_state.actions     = _gsheet_data["actions"]
-        st.session_state.update_time = _gsheet_data["update_time"]
+        st.session_state.bank_state   = _gsheet_data["bank_state"]
+        st.session_state.bank_order   = _gsheet_data["bank_order"]
+        st.session_state.actions      = _gsheet_data["actions"]
+        st.session_state.update_time  = _gsheet_data["update_time"]
+        st.session_state.input_hashes = _gsheet_data.get("input_hashes", [])
     else:
         _local = load_local_data()
         if _local:
@@ -678,10 +691,20 @@ def save_to_gsheet(client, spreadsheet_id: str):
                 "완료" if a.get("completed") else "미완료", now,
             ])
         ws_act_gs.update("A1", act_rows)
-        ws_act_gs.format("A1:F1", {
+        ws_act_gs.format("A1:G1", {
             "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
             "backgroundColor": {"red": 0.12, "green": 0.31, "blue": 0.47},
         })
+
+        # input_hashes 시트 (중복 제출 방지)
+        try:
+            ws_hash = wb.worksheet("input_hashes")
+            ws_hash.clear()
+        except gspread.WorksheetNotFound:
+            ws_hash = wb.add_worksheet(title="input_hashes", rows=500, cols=2)
+        hashes = st.session_state.get("input_hashes", [])
+        hash_rows = [["hash", "저장일시"]] + [[h, now] for h in hashes]
+        ws_hash.update("A1", hash_rows)
 
         return True, len(new_rows)
     except Exception as e:
