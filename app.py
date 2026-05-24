@@ -46,6 +46,18 @@ import gspread
 from google.oauth2.service_account import Credentials
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
+# ── Google Sheets 클라이언트 (세션 초기화보다 먼저 정의) ───────────────────────
+_SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+
+def get_gsheet_client():
+    try:
+        creds = Credentials.from_service_account_info(
+            dict(st.secrets["gcp_service_account"]), scopes=_SCOPES
+        )
+        return gspread.authorize(creds)
+    except Exception:
+        return None
+
 # ── 페이지 설정 ────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="VIS 이슈어 온보딩 트래커", page_icon="💳", layout="wide")
 
@@ -143,6 +155,75 @@ DEFAULT_ACTIONS = [
      "assignee": "", "due_date": "", "completed": False},
 ]
 
+def load_from_gsheet(client, spreadsheet_id: str) -> dict | None:
+    """구글 시트에서 bank_state, actions, update_time을 읽어와서 반환."""
+    try:
+        wb = client.open_by_key(spreadsheet_id)
+
+        # dashboard 시트 → bank_state
+        ws_dash = wb.worksheet("dashboard")
+        records = ws_dash.get_all_records()
+        bank_state = {}
+        bank_order = []
+        for row in records:
+            bank = row.get("은행", "")
+            if not bank:
+                continue
+            bank_order.append(bank)
+            bank_state[bank] = {
+                "krw_vnd": row.get("KRW/VND", ""),
+                "usd":     row.get("USD", ""),
+                "tc":      row.get("T&C", ""),
+                "tc_url":  row.get("T&C URL", ""),
+                "bin":     row.get("BIN상태", ""),
+                "status":  row.get("전체상태", ""),
+                "note":    row.get("비고", ""),
+                "bin_list": [],
+            }
+
+        # bin_list 시트 → bin_list 복원
+        try:
+            ws_bin = wb.worksheet("bin_list")
+            for row in ws_bin.get_all_records():
+                bank = row.get("은행", "")
+                bin_no = str(row.get("BIN 번호", "")).strip()
+                if bank in bank_state and bin_no:
+                    bank_state[bank]["bin_list"].append(bin_no)
+        except Exception:
+            pass
+
+        # actions 시트 → actions
+        actions = []
+        try:
+            ws_act = wb.worksheet("actions")
+            for row in ws_act.get_all_records():
+                tag  = row.get("태그", "")
+                text = row.get("내용", "")
+                if not text:
+                    continue
+                actions.append({
+                    "tag":       tag,
+                    "bank":      row.get("은행", ""),
+                    "text":      text,
+                    "assignee":  row.get("담당자", ""),
+                    "due_date":  row.get("마감일", ""),
+                    "completed": row.get("완료여부", "") == "완료",
+                })
+        except Exception:
+            pass
+
+        if not bank_order:
+            return None
+
+        return {
+            "bank_state":  bank_state,
+            "bank_order":  bank_order,
+            "actions":     actions if actions else list(DEFAULT_ACTIONS),
+            "update_time": "구글 시트에서 복원",
+        }
+    except Exception:
+        return None
+
 # API 키: secrets → 환경변수 → 빈 문자열 순으로 자동 로드
 def _load_api_key() -> str:
     try:
@@ -160,13 +241,29 @@ _defaults = {
     "input_hashes": [],
     "history":      [],
 }
-# 로컬 저장 파일이 있으면 우선 로드
-_local = load_local_data()
-if _local and "bank_state" not in st.session_state:
-    st.session_state.bank_state  = _local.get("bank_state",  dict(DEFAULT_STATE))
-    st.session_state.bank_order  = _local.get("bank_order",  list(DEFAULT_STATE.keys()))
-    st.session_state.actions     = _local.get("actions",     list(DEFAULT_ACTIONS))
-    st.session_state.update_time = _local.get("update_time", "2026년 5월 15일 (이메일 기준)")
+# ── 시작 시 데이터 로드: 구글 시트 → 로컬 JSON → 기본값 순으로 시도 ──────────
+if "bank_state" not in st.session_state:
+    _gsheet_data = None
+    try:
+        _gs_sid = st.secrets["google"]["spreadsheet_id"]
+        _gs_cli = get_gsheet_client()
+        if _gs_cli and _gs_sid:
+            _gsheet_data = load_from_gsheet(_gs_cli, _gs_sid)
+    except Exception:
+        pass
+
+    if _gsheet_data:
+        st.session_state.bank_state  = _gsheet_data["bank_state"]
+        st.session_state.bank_order  = _gsheet_data["bank_order"]
+        st.session_state.actions     = _gsheet_data["actions"]
+        st.session_state.update_time = _gsheet_data["update_time"]
+    else:
+        _local = load_local_data()
+        if _local:
+            st.session_state.bank_state  = _local.get("bank_state",  dict(DEFAULT_STATE))
+            st.session_state.bank_order  = _local.get("bank_order",  list(DEFAULT_STATE.keys()))
+            st.session_state.actions     = _local.get("actions",     list(DEFAULT_ACTIONS))
+            st.session_state.update_time = _local.get("update_time", "2026년 5월 15일 (이메일 기준)")
 
 for _k, _v in _defaults.items():
     if _k not in st.session_state:
@@ -479,21 +576,11 @@ def apply_update(parsed: dict, input_hash: str = None):
 
 
 # ── 6. Google Sheets 연동 ──────────────────────────────────────────────────────
-_SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 _FIELD_LABELS = {
     "krw_vnd": "KRW/VND 플랜", "usd": "USD 플랜",
     "tc": "영어 T&C", "bin": "BIN 리스트",
     "status": "전체 상태", "note": "비고",
 }
-
-def get_gsheet_client():
-    try:
-        creds = Credentials.from_service_account_info(
-            dict(st.secrets["gcp_service_account"]), scopes=_SCOPES
-        )
-        return gspread.authorize(creds)
-    except Exception:
-        return None
 
 def save_to_gsheet(client, spreadsheet_id: str):
     try:
@@ -582,11 +669,11 @@ def save_to_gsheet(client, spreadsheet_id: str):
             ws_act_gs.clear()
         except gspread.WorksheetNotFound:
             ws_act_gs = wb.add_worksheet(title="actions", rows=100, cols=6)
-        act_header = ["태그", "내용", "담당자", "마감일", "완료여부", "저장일시"]
+        act_header = ["태그", "은행", "내용", "담당자", "마감일", "완료여부", "저장일시"]
         act_rows = [act_header]
         for a in st.session_state.actions:
             act_rows.append([
-                a.get("tag",""), a.get("text",""),
+                a.get("tag",""), a.get("bank",""), a.get("text",""),
                 a.get("assignee",""), a.get("due_date",""),
                 "완료" if a.get("completed") else "미완료", now,
             ])
