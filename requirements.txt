@@ -1,0 +1,7 @@
+streamlit
+anthropic
+openpyxl
+gspread
+google-auth
+plotly
+pandas
