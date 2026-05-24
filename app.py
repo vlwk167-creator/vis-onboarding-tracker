@@ -564,22 +564,22 @@ def apply_update(parsed: dict, input_hash: str = None):
             elif v:
                 st.session_state.bank_state[bank][k] = v
 
-    # 액션 아이템: 완료된 항목 보존 + 신규 항목 추가
+    # 액션 아이템: 기존 항목 보존 + 새 항목만 추가 (중복 텍스트 제외)
     new_actions_raw = [a for a in parsed.get("actions", []) if a.get("text", "").strip()]
     if new_actions_raw:
-        # 기존에서 완료된 것들 보존
-        completed_old = [a for a in st.session_state.actions if a.get("completed")]
-        new_actions = []
+        existing_texts = {a["text"].strip() for a in st.session_state.actions}
         for a in new_actions_raw:
-            new_actions.append({
-                "tag":       a.get("tag", "확인필요"),
-                "bank":      a.get("bank", ""),
-                "text":      a.get("text", ""),
-                "assignee":  "",
-                "due_date":  "",
-                "completed": False,
-            })
-        st.session_state.actions = new_actions + completed_old
+            text = a.get("text", "").strip()
+            if text and text not in existing_texts:
+                st.session_state.actions.append({
+                    "tag":       a.get("tag", "확인필요"),
+                    "bank":      a.get("bank", ""),
+                    "text":      text,
+                    "assignee":  "",
+                    "due_date":  "",
+                    "completed": False,
+                })
+                existing_texts.add(text)
 
     if parsed.get("update_date"):
         st.session_state.update_time = parsed["update_date"]
