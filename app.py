@@ -181,6 +181,10 @@ for _bank in st.session_state.bank_state:
 for _old_key in ["manual_log", "slack_webhook", "editor_name", "auto_save"]:
     st.session_state.pop(_old_key, None)
 
+# 기존 actions에 bank 필드 없을 경우 보완 (구버전 호환)
+for _act in st.session_state.actions:
+    _act.setdefault("bank", "")
+
 # 기존 actions에 새 필드 없을 경우 보완
 for _act in st.session_state.actions:
     _act.setdefault("assignee", "")
