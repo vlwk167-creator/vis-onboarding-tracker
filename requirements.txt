@@ -1,8 +1,7 @@
-streamlit
-anthropic
-openpyxl
-gspread
-google-auth
-plotly
-pandas
-
+streamlit>=1.32.0
+anthropic>=0.25.0
+openpyxl>=3.1.0
+pandas>=2.0.0
+reportlab>=4.0.0
+gspread>=6.0.0
+google-auth>=2.0.0
